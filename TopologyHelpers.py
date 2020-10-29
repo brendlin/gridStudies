@@ -1,6 +1,7 @@
 # Helper functions to return topologically-relevant output
 # Input includes grid2op environment
 
+import CommonHelpers
 import numpy as np
 
 def MakeAdjacencyMatrix(_env,n_buses=2,skipExternals=False,printLineIDs=False,lineOnBits=-1) :
@@ -50,6 +51,29 @@ def MakeAdjacencyMatrix(_env,n_buses=2,skipExternals=False,printLineIDs=False,li
         adj_matrix[sub][li] = 1
 
     return adj_matrix
+
+
+class AdjacencyMatrixClass :
+
+    def __init__(self,env) :
+        self.adjacency_matrix = MakeAdjacencyMatrix(env,n_buses=2,skipExternals=False)
+        self.n_sub = len(env.sub_info)
+        self.n_gen = env.n_gen
+        self.n_load = env.n_load
+
+    def ElementIDToAdjacencyIndex(self,elementID) :
+        isLineOr = (elementID//1000 == 1)
+        isLineEx = (elementID//1000 == 2)
+        isLoad = (elementID//1000 == 3)
+        isGen = (elementID//1000 == 4)
+
+        if isGen :
+            return self.n_sub*2 + (elementID - 4000)
+        if isLoad :
+            return self.n_sub*2 + self.n_gen + (elementID - 3000)
+        if isLineEx :
+            return (elementID - 2000)*2
+        return (elementID - 1000)*2
 
 
 def MakeLaplacian(_env,n_buses=2,skipExternals=False,lineOnBits=-1) :
@@ -233,19 +257,12 @@ def nConnected(flag,n_total) :
     return n_ones
 
 
-def FullyConnectedBitset(n_bits) :
-    x = 0
-    for i in range(n_bits) :
-        x += 0b1 << i
-    return x
-
-
 def ExcludedByBitsetWithFewerDisconnections(line_bitset,excluded_bitsets) :
     # If there is a bitset in the list "excluded_bitsets"
     # whose list of off-lines is a subset of the list of off-lines of this line_bitset,
     # then return True.
 
-    all_on = FullyConnectedBitset(20)
+    all_on = CommonHelpers.FullyConnectedBitset(20)
     line_bitset_flipped = all_on - line_bitset
 
     for excl_bitset in excluded_bitsets :
@@ -268,7 +285,7 @@ def AddExcludedBitset(line_bitset,excluded_bitsets) :
     #    bitset with a smaller list of off-lines (since the other is definitely not a
     #    minimum-cut bitset).
 
-    all_on = FullyConnectedBitset(20)
+    all_on = CommonHelpers.FullyConnectedBitset(20)
     line_bitset_flipped = all_on - line_bitset
 
     for i in range(len(excluded_bitsets)-1,-1,-1) :
@@ -290,33 +307,3 @@ def AddExcludedBitset(line_bitset,excluded_bitsets) :
     #print('Excluded bitsets changed; new size is',len(excluded_bitsets))
 
     return
-
-
-def FindConnectedAndUnconnectedBitsets(_env) :
-    # Return the number of connected, unconnected bitsets, and
-    # a list of the unique minimum-cut bitsets.
-
-    n_connected = 0
-    n_unconnected = 0
-    minimum_cut_bitsets = []
-    for i,line_bitset in enumerate(reversed(range(FullyConnectedBitset(_env.n_line)))) :
-
-        # Check if another graph with fewer disconnections was already excluded, which
-        # automatically would exclude this graph
-        if ExcludedByBitsetWithFewerDisconnections(line_bitset,minimum_cut_bitsets) :
-            n_unconnected += 1
-            continue
-
-        adjacency_matrix = MakeAdjacencyMatrix(_env,n_buses=1,
-                                               skipExternals=True,
-                                               lineOnBits=line_bitset)
-
-        isConnected = IsConnectedManual(adjacency_matrix)
-        n_connected += isConnected
-        n_unconnected += (not isConnected)
-
-        if not isConnected :
-            AddExcludedBitset(line_bitset,minimum_cut_bitsets)
-
-    return n_connected,n_unconnected,minimum_cut_bitsets
-

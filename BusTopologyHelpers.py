@@ -1,6 +1,8 @@
 
 # Module for imposing bus rules, given a bitset representation.
 
+import CommonHelpers
+
 def RemoveBitFromFlag(flag,bit_to_remove,verbose=False) :
     # Remove a bit (count starting from 0)
     # Returns a flag of length n-1
@@ -44,6 +46,23 @@ def IsValidBooleanBusState(flag,nbits,i_gens=[],i_loads=[],items_disconnected=[]
     if ((n_ones) == 1 or (n_zeros == 1)) and nbits > 1:
         if verbose : print('Excluding {:0{}b} by illegal bus manoeuvre - {:d} item(s) on bus 1 and {:d} item(s) on bus 0.'.format(flag,nbits,n_ones,n_zeros))
         return False
+
+    # Test to make sure generators or loads (externals) are not islanded.
+    # (In other words, does one bus only contain externals and disconnected lines?)
+    if len(i_gens + i_loads + items_disconnected) > 0 :
+
+        externals_and_disconnecteds = 0
+        for i in i_gens + i_loads + items_disconnected :
+            externals_and_disconnecteds += 0b1 << i
+
+        if flag and (flag & externals_and_disconnecteds == flag) :
+            if verbose : print('Excluding {:0{}b} because of islanded externals on bus 1.'.format(flag,nbits))
+            return False
+
+        flag_inverted = CommonHelpers.FullyConnectedBitset(nbits) - flag
+        if flag_inverted and (flag_inverted & externals_and_disconnecteds == flag_inverted) :
+            if verbose : print('Here: Excluding {:0{}b} because of islanded externals on bus 0.'.format(flag,nbits))
+            return False
 
     # If lines are disconnected, then by convention they must be set to bus "1" here
     reduced_flag = flag
