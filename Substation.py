@@ -2,6 +2,7 @@
 import CommonHelpers
 import BusTopologyHelpers
 import numpy as np
+import itertools
 
 class Substation :
 
@@ -33,6 +34,67 @@ class Substation :
         # This should be static.
         self.elementIDs = np.array(elementIDs)
 
+        # Precompute the valid boolean bus states, for all combos of lines on/off and bus configs.
+        _lineOffCombos = []
+        for i in range(len(self.LocalLineIndices())+1) :
+            _lineOffCombos += itertools.combinations(self.LocalLineIndices(),i)
+
+        all_bus_combos = reversed(range(CommonHelpers.FullyConnectedBitset(self.nElements)+1))
+
+        for sub_bitset in all_bus_combos :
+
+            # If it is not a valid bus state at all (regardless of disconnected lines),
+            # then do not put the bitset into the validityCache keys at all.
+            # We will use the validityCache to get the list of valid possible bus states.
+            if not BusTopologyHelpers.IsValidBooleanBusState(sub_bitset,
+                                                             self.nElements,
+                                                             i_gens = self.LocalGeneratorIndices(),
+                                                             i_loads = self.LocalLoadIndices(),
+                                                             items_disconnected = []) :
+                continue
+
+            self.validityCache[sub_bitset] = dict()
+
+            for _lineOffTuple in _lineOffCombos :
+                _lineOffList = list(_lineOffTuple)
+                v = BusTopologyHelpers.IsValidBooleanBusState(sub_bitset,
+                                                              self.nElements,
+                                                              i_gens = self.LocalGeneratorIndices(),
+                                                              i_loads = self.LocalLoadIndices(),
+                                                              items_disconnected = _lineOffList,
+                                                              verbose=False)
+                lineOffKey = 0
+                for i in _lineOffList :
+                    lineOffKey += (0b1 << i)
+                self.validityCache[sub_bitset][lineOffKey] = v
+                #print('LocalLineIndices:',self.LocalLineIndices(),'checking',_lineOffList,valid)
+
+        return
+
+    def GetValidBusStates(self) :
+        # Get the valid bus states (ignoring effects of turning off lines)
+        # These should be filled in at construction.
+        return list(self.validityCache.keys())
+
+    def printValidityCache(self) :
+        total = 0
+        for kbus in self.validityCache.keys() :
+            kbus_str = "0b{:0{}b}".format(kbus,self.nElements)
+            invalid = []
+            valid = []
+            for kline in self.validityCache[kbus].keys() :
+                kline_str = "0b{:0{}b}".format(kline,len(self.LocalLineIndices()))
+                total += 1
+                if self.validityCache[kbus][kline] :
+                    valid.append(kline_str)
+                else :
+                    invalid.append(kline_str)
+            #print('Bus:',kbus_str)
+            #print(' - Valid (lineOff) ({})   : {}'.format(len(valid),valid))
+            #print(' - Invalid: (lineOff) ({}): {}'.format(len(invalid),invalid))
+        print('Total states stored in the cache for this bus:',total)
+        return
+
     # "Local" index here refers to the local bus bits here
     def LocalGeneratorIndices(self) :
         return list(np.where(self.elementIDs//1000 == 4)[0])
@@ -45,11 +107,17 @@ class Substation :
         
     def SetBusConfig(self,bits) :
         self.currentBusConfig = bits
-        if bits not in self.validityCache.keys() :
-            self.validityCache[bits] = dict()
+        #if bits not in self.validityCache.keys() :
+        #    self.validityCache[bits] = dict()
         return
 
     def IsValidBooleanBusState(self,lineOnBits=-1) :
+
+        # If it is not in the validity cache, then it is not a valid bus state, period.
+        #print('Checking if {} is in'.format(self.currentBusConfig),self.validityCache.keys())
+        if self.currentBusConfig not in self.validityCache.keys() :
+            #print('It is not! Getting out of here!')
+            return False
 
         localDisconnIndices = []
         cacheKey = 0
@@ -65,18 +133,12 @@ class Substation :
                     cacheKey += (0b1 << li)
                     localDisconnIndices.append(li)
 
-        if cacheKey in self.validityCache[self.currentBusConfig].keys() :
-            return self.validityCache[self.currentBusConfig][cacheKey]
-
-        valid = BusTopologyHelpers.IsValidBooleanBusState(self.currentBusConfig,
-                                                          self.nElements,
-                                                          i_gens = self.LocalGeneratorIndices(),
-                                                          i_loads = self.LocalLoadIndices(),
-                                                          items_disconnected = localDisconnIndices,
-                                                          verbose=False)
-
-        self.validityCache[self.currentBusConfig][cacheKey] = valid
-        return valid
+        # Otherwise, all results are now precomputed.
+        # print('Looking for bus 0b{:0{}b}, key 0b{:0{}b}'.format(self.currentBusConfig,
+        #                                                         self.nElements,
+        #                                                         cacheKey,
+        #                                                         len(self.LocalLineIndices())))
+        return self.validityCache[self.currentBusConfig][cacheKey]
 
     # def verifyBusConfiguration(self,adjacency_matrix_class) :
     #     for i in self.nElements :
@@ -96,14 +158,11 @@ def BuildSubstations(env) :
 
         # Find the line (OR) ids that link to this sub
         line_or_ids = np.where(env.line_or_to_subid == sub)[0]
-
         for lid in line_or_ids :
-
             # The sub position
             sub_pos = env.line_or_to_sub_pos[lid]
             if element_ids[sub_pos] != 0 :
                 print('Error -- this sub position is already filled! (line OR)')
-
             element_ids[sub_pos] = 1000 + lid
 
         # Find the line (EX) ids that link to this sub
