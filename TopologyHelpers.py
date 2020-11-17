@@ -55,26 +55,75 @@ def MakeAdjacencyMatrix(_env,n_buses=2,skipExternals=False,printLineIDs=False,li
 
 class AdjacencyMatrixClass :
 
-    def __init__(self,env) :
-        self.adjacency_matrix = MakeAdjacencyMatrix(env,n_buses=2,skipExternals=False)
+    def __init__(self,env,lineOnBits=-1) :
+        self.adjacency_matrix = MakeAdjacencyMatrix(env,
+                                                    n_buses=2,
+                                                    skipExternals=False,
+                                                    lineOnBits=lineOnBits)
+        self.lineOnBits = lineOnBits
         self.n_sub = len(env.sub_info)
         self.n_gen = env.n_gen
         self.n_load = env.n_load
 
+    # This is a helper item for translating substation bus-switching commands to
+    # actions on an adjacency matrix representation of the grid..
     def ElementIDToAdjacencyIndex(self,elementID) :
-        isLineOr = (elementID//1000 == 1)
-        isLineEx = (elementID//1000 == 2)
         isLoad = (elementID//1000 == 3)
         isGen = (elementID//1000 == 4)
 
         if isGen :
-            return self.n_sub*2 + (elementID - 4000)
+            return int(self.n_sub*2 + (elementID - 4000))
         if isLoad :
-            return self.n_sub*2 + self.n_gen + (elementID - 3000)
-        if isLineEx :
-            return (elementID - 2000)*2
-        return (elementID - 1000)*2
+            return int(self.n_sub*2 + self.n_gen + (elementID - 3000))
 
+        # Bus ID is stored in the decimal. Return "bus 1" version
+        return 2*int(np.round( (elementID - int(elementID))*1000 , 0))
+
+    def FindFullyDisconnectedBuses(self) :
+        return FindFullyDisconnectedBuses(self.adjacency_matrix,self.n_sub)
+
+    def GetDisjointSets(self) :
+
+        disabled = self.FindFullyDisconnectedBuses()
+        disjoint_sets = GetDisjointSets(self.adjacency_matrix,unused_buses=disabled)
+
+        # If a substation is completely disconnected, then consider this illegal.
+        # Put the substation in the list of disjoint sets.
+        for i in range(0,self.n_sub*2,2) :
+            if i in disabled and i+1 in disabled :
+                #print('We have a fully-disconnected substation. Bad.')
+                disjoint_sets[i] = i
+
+        return disjoint_sets
+
+
+    def SetListOfElementsToBusN(self,busIndex,whichBus,elementIDs) :
+        i = 2*busIndex + (whichBus - 1)
+        i_off = 2*busIndex + 1 - (whichBus - 1)
+        for elementID in elementIDs :
+            j = self.ElementIDToAdjacencyIndex(elementID)
+
+            # If it is a substation, gotta figure out which bus is active.
+            if j < 2*self.n_sub :
+                if self.adjacency_matrix[i][j] or self.adjacency_matrix[i_off][j] :
+                    j = j
+                elif self.adjacency_matrix[i][j+1] or self.adjacency_matrix[i_off][j+1] :
+                    j = j+1
+                else :
+                    # The line must be turned off. Do nothing.
+                    txt = 'No connection found b/w {} and {} -- probably the line is off.'
+                    txt2 = '(This is okay!)'
+                    #print(txt.format(i,j),txt2)
+                    continue
+
+            sthChanged = 'no change' if (self.adjacency_matrix[i][j] == 1 and
+                                         self.adjacency_matrix[i_off][j] == 0) else 'changed'
+            #print('Bus {} switch: ({},{}) to ({},{}) ({})'.format(whichBus,i_off,j,i,j,sthChanged))
+            self.adjacency_matrix[i][j] = 1
+            self.adjacency_matrix[j][i] = 1
+            self.adjacency_matrix[i_off][j] = 0
+            self.adjacency_matrix[j][i_off] = 0
+        return
 
 def MakeLaplacian(_env,n_buses=2,skipExternals=False,lineOnBits=-1) :
     # Given an environment, make the Laplacian matrix
@@ -120,6 +169,19 @@ def IsConnectedLaplacianEigenvalue(_lap_matrix) :
 
     return (n_zeroeig <= 1)
 
+def FindFullyDisconnectedBuses(_adjacency_matrix,n_sub,n_buses=2) :
+    # Find any buses that are completely disconnected
+    # from the grid. Normally, this is fine.
+    # If an entire substation is disconnected,
+    # then that is a problem which this can help to identify.
+    disabled = []
+    for i,row in enumerate(_adjacency_matrix[:n_sub*n_buses]) :
+        if np.count_nonzero(row) :
+            continue
+        #print(i,'is disconnected')
+        disabled.append(i)
+    return disabled
+
 def IsConnectedManual(_adj_matrix) :
     i_start = 0
     SetOfAlreadyTraversed = set([i_start])
@@ -142,35 +204,41 @@ def IsConnectedManual(_adj_matrix) :
     return len(SetOfAlreadyTraversed) == len(_adj_matrix)
 
 
-def GetDisjointSets(_adj_matrix) :
+def GetDisjointSets(_adj_matrix,unused_buses=[]) :
     # Return a dictionary of disjoint sets.
 
-    i_start = 0
+    # Start with the first bus that is in use.
+    for i in range(len(_adj_matrix)) :
+        if i not in unused_buses :
+            i_start = i
+            break
 
     # Consider the case where you might have >1 disjoint sets
-    AllTraversedVertices = set([i_start])
+    # Throw unused buses in here, e.g. we know that they should be counted as
+    # belonging to their own set (we will not report them though).
+    AllTraversedVertices = set([i_start] + unused_buses)
 
     DisjointSetsOfAlreadyTraversed = dict()
     DisjointSetsOfAlreadyTraversed[i_start] = set([i_start])
     CurrentSetOfAlreadyTraversed = DisjointSetsOfAlreadyTraversed[i_start]
 
-    new_vertices = [i_start]
+    border_vertices = [i_start]
     while True :
 
-        #print('new_vertices:',new_vertices)
+        #print('border_vertices:',border_vertices)
         #print('DisjointSetsOfAlreadyTraversed',DisjointSetsOfAlreadyTraversed)
         #print('All traversed vertices',AllTraversedVertices)
 
-        next_new_vertices = []
-        for i_vert in new_vertices :
+        new_frontier_vertices = []
+        for i_vert in border_vertices :
             for j_vert,entry in enumerate(_adj_matrix[i_vert]) :
                 if (entry == 1) and (j_vert not in CurrentSetOfAlreadyTraversed) :
                     CurrentSetOfAlreadyTraversed.add(j_vert)
                     AllTraversedVertices.add(j_vert)
-                    next_new_vertices.append(j_vert)
+                    new_frontier_vertices.append(j_vert)
 
         # check if there are no new vertices
-        if not len(next_new_vertices) :
+        if not len(new_frontier_vertices) :
 
             # If you traversed every vertex, then break
             if len(CurrentSetOfAlreadyTraversed) == len(_adj_matrix) :
@@ -183,13 +251,13 @@ def GetDisjointSets(_adj_matrix) :
             for i_vert in range(len(_adj_matrix)) :
                 if i_vert in AllTraversedVertices :
                     continue
-                next_new_vertices.append(i_vert)
+                new_frontier_vertices.append(i_vert)
                 DisjointSetsOfAlreadyTraversed[i_vert] = set([i_vert])
                 CurrentSetOfAlreadyTraversed = DisjointSetsOfAlreadyTraversed[i_vert]
                 AllTraversedVertices.add(i_vert)
                 break
 
-        new_vertices = next_new_vertices
+        border_vertices = new_frontier_vertices
 
     return DisjointSetsOfAlreadyTraversed
 

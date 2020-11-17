@@ -71,10 +71,21 @@ class Substation :
 
         return
 
-    def GetValidBusStates(self) :
+    def GetValidBusStates(self,lineOnBits=-1) :
         # Get the valid bus states (ignoring effects of turning off lines)
         # These should be filled in at construction.
-        return list(self.validityCache.keys())
+        if lineOnBits < 0 :
+            return list(self.validityCache.keys())
+
+        valid_states = []
+        tmp_saveBusConfig = self.currentBusConfig
+        for i in self.validityCache.keys() :
+            self.SetBusConfig(i)
+            if self.IsValidBooleanBusState(lineOnBits=lineOnBits) :
+                valid_states.append(i)
+
+        self.currentBusConfig = tmp_saveBusConfig
+        return valid_states
 
     def printValidityCache(self) :
         total = 0
@@ -89,9 +100,9 @@ class Substation :
                     valid.append(kline_str)
                 else :
                     invalid.append(kline_str)
-            #print('Bus:',kbus_str)
-            #print(' - Valid (lineOff) ({})   : {}'.format(len(valid),valid))
-            #print(' - Invalid: (lineOff) ({}): {}'.format(len(invalid),invalid))
+            print('Bus:',kbus_str)
+            print(' - Valid (lineOff) ({})   : {}'.format(len(valid),valid))
+            print(' - Invalid: (lineOff) ({}): {}'.format(len(invalid),invalid))
         print('Total states stored in the cache for this bus:',total)
         return
 
@@ -104,11 +115,51 @@ class Substation :
 
     def LocalLineIndices(self) :
         return list(np.where(self.elementIDs//1000 <= 2)[0])
+
+    def GetLineID(self,elementID) :
+        # For line IDs of the form 2005.001 return "5" (the lineID)
+        return int(elementID%1000)
         
     def SetBusConfig(self,bits) :
         self.currentBusConfig = bits
         #if bits not in self.validityCache.keys() :
         #    self.validityCache[bits] = dict()
+        return
+
+    def ApplyBusConfig(self,bits,adjacency_matrix_class,verbose=False) :
+
+        tmp_saveBusConfig = self.currentBusConfig
+        self.SetBusConfig(bits)
+        if not self.IsValidBooleanBusState(lineOnBits=adjacency_matrix_class.lineOnBits) :
+            tmp = 'Warning: tried to apply an invalid bus state 0b{:0{}b}. Doing nothing.'
+            print(tmp.format(bits,self.nElements))
+            self.currentBusConfig = tmp_saveBusConfig
+            return
+
+        if verbose :
+            print('Switching from 0b{:0{}b} to 0b{:0{}b}'.format(self.currentBusConfig,
+                                                                 self.nElements,
+                                                                 bits,
+                                                                 self.nElements))
+        toBus1 = []
+        toBus2 = []
+        for i in range(self.nElements) :
+            if (bits & (0b1 << i)) == (0b1 << i) :
+                toBus1.append(self.elementIDs[i])
+            else :
+                toBus2.append(self.elementIDs[i])
+
+        if verbose :
+            print('On bus 1:',toBus1)
+            print('On bus 2:',toBus2)
+
+        self.currentBusConfig = bits
+
+        if len(toBus1) :
+            adjacency_matrix_class.SetListOfElementsToBusN(self.index,1,toBus1)
+        if len(toBus2) :
+            adjacency_matrix_class.SetListOfElementsToBusN(self.index,2,toBus2)
+
         return
 
     def IsValidBooleanBusState(self,lineOnBits=-1) :
@@ -124,7 +175,7 @@ class Substation :
 
         if lineOnBits > 0 :
             for li in self.LocalLineIndices() :
-                lineID = self.elementIDs[li]%1000
+                lineID = self.GetLineID(self.elementIDs[li])
                 isOn = lineOnBits & (0b1 << lineID)
                 #print('{} is {}'.format(lineID,'on' if isOn else 'off'))
                 if isOn :
@@ -140,9 +191,6 @@ class Substation :
         #                                                         len(self.LocalLineIndices())))
         return self.validityCache[self.currentBusConfig][cacheKey]
 
-    # def verifyBusConfiguration(self,adjacency_matrix_class) :
-    #     for i in self.nElements :
-    #         toAdjacencyID = list(adjacency_matrix_class.
 
 def BuildSubstations(env) :
 
@@ -163,7 +211,8 @@ def BuildSubstations(env) :
             sub_pos = env.line_or_to_sub_pos[lid]
             if element_ids[sub_pos] != 0 :
                 print('Error -- this sub position is already filled! (line OR)')
-            element_ids[sub_pos] = 1000 + lid
+            links_to_sub = env.line_ex_to_subid[lid]
+            element_ids[sub_pos] = 1000 + lid + np.round(links_to_sub / 1000.,3)
 
         # Find the line (EX) ids that link to this sub
         line_ex_ids = np.where(env.line_ex_to_subid == sub)[0]
@@ -171,7 +220,8 @@ def BuildSubstations(env) :
             sub_pos = env.line_ex_to_sub_pos[lid]
             if element_ids[sub_pos] != 0 :
                 print('Error -- this sub position is already filled! (line EX)')
-            element_ids[sub_pos] = 2000 + lid
+            links_to_sub = env.line_or_to_subid[lid]
+            element_ids[sub_pos] = 2000 + lid + np.round(links_to_sub / 1000.,3)
 
         # Now loads
         load_ids = np.where(env.load_to_subid == sub)[0]
