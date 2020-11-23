@@ -126,6 +126,9 @@ class Substation :
         #    self.validityCache[bits] = dict()
         return
 
+    def ResetBusConfig(self) :
+        self.currentBusConfig = CommonHelpers.FullyConnectedBitset(self.nElements)
+
     def ApplyBusConfig(self,bits,adjacency_matrix_class,verbose=False) :
 
         tmp_saveBusConfig = self.currentBusConfig

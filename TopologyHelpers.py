@@ -297,15 +297,15 @@ def PrintLineIDs(_env) :
 
     line_lookup = MakeAdjacencyMatrix(_env,n_buses=1,skipExternals=True,printLineIDs=True)
 
-    tmp = '     '
+    tmp = '    '
     for i in range(len(_env.sub_info)) :
-        tmp += 'sub%02d '%(i)
+        tmp += 's%02d '%(i)
     print(tmp)
 
-    for i,mline in enumerate(line_lookup[:2*len(_env.sub_info)]) :        
+    for i,mline in enumerate(line_lookup[:len(_env.sub_info)]) :
         tmp = ''
-        tmp += ('sub%02d '%(i/2) if not i%2 else '      ')
-        tmp += ' '.join(('%02d'%(a) if a>=0 else '· ') for a in list(mline[:2*len(_env.sub_info)]))
+        tmp +=         ('s%02d '%(i/2) if not i%2 else '    ')
+        tmp += ''.join((' %02d '%(a)   if    a>=0 else '  · ') for a in list(mline[:len(_env.sub_info)]))
         print(tmp)
 
     return
