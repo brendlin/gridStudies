@@ -65,6 +65,21 @@ class AdjacencyMatrixClass :
         self.n_gen = env.n_gen
         self.n_load = env.n_load
 
+    def GetMatrixHeader(self) :
+        col_s = ''.join('s{:02d} '.format(a) for a in range(self.n_sub))
+        col_g = ''.join('g ' for a in range(self.n_gen))
+        col_l = ''.join('l ' for a in range(self.n_load))
+        return '    '+col_s+col_g+col_l
+
+    def GetRowHeader(self,i_row) :
+        if i_row < self.n_sub*2 :
+            if i_row%2 :
+                return '    '
+            return 's{:02d} '.format(int(i_row/2))
+        if i_row < self.n_sub*2 + self.n_gen :
+            return 'g{:02d} '.format(int(i_row-self.n_sub*2))
+        return 'l{:02d} '.format(int(i_row-self.n_sub*2-self.n_gen))
+
     # This is a helper item for translating substation bus-switching commands to
     # actions on an adjacency matrix representation of the grid..
     def ElementIDToAdjacencyIndex(self,elementID) :
@@ -182,7 +197,7 @@ def FindFullyDisconnectedBuses(_adjacency_matrix,n_sub,n_buses=2) :
         disabled.append(i)
     return disabled
 
-def IsConnectedManual(_adj_matrix) :
+def IsConnectedManual(_adj_matrix,unused_buses=[]) :
     i_start = 0
     SetOfAlreadyTraversed = set([i_start])
 
@@ -201,7 +216,7 @@ def IsConnectedManual(_adj_matrix) :
 
         new_vertices = next_new_vertices
 
-    return len(SetOfAlreadyTraversed) == len(_adj_matrix)
+    return len(SetOfAlreadyTraversed) == (len(_adj_matrix) - len(unused_buses))
 
 
 def GetDisjointSets(_adj_matrix,unused_buses=[]) :

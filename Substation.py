@@ -129,7 +129,7 @@ class Substation :
     def ResetBusConfig(self) :
         self.currentBusConfig = CommonHelpers.FullyConnectedBitset(self.nElements)
 
-    def ApplyBusConfig(self,bits,adjacency_matrix_class,verbose=False) :
+    def ApplyBusConfig(self,bits,adjacency_matrix_class,verbose=False,doNotExecute=False) :
 
         tmp_saveBusConfig = self.currentBusConfig
         self.SetBusConfig(bits)
@@ -140,10 +140,11 @@ class Substation :
             return
 
         if verbose :
-            print('Switching from 0b{:0{}b} to 0b{:0{}b}'.format(self.currentBusConfig,
-                                                                 self.nElements,
-                                                                 bits,
-                                                                 self.nElements))
+            print('Substation {} switching from 0b{:0{}b} to 0b{:0{}b}'.format(self.index,
+                                                                               tmp_saveBusConfig,
+                                                                               self.nElements,
+                                                                               bits,
+                                                                               self.nElements))
         toBus1 = []
         toBus2 = []
         for i in range(self.nElements) :
@@ -158,9 +159,9 @@ class Substation :
 
         self.currentBusConfig = bits
 
-        if len(toBus1) :
+        if (not doNotExecute) and len(toBus1) :
             adjacency_matrix_class.SetListOfElementsToBusN(self.index,1,toBus1)
-        if len(toBus2) :
+        if (not doNotExecute) and len(toBus2) :
             adjacency_matrix_class.SetListOfElementsToBusN(self.index,2,toBus2)
 
         return
